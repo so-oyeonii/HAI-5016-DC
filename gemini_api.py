@@ -1,78 +1,100 @@
-# 간단한 실행 가능한 예제로 교체합니다.
-# 이 스크립트는 .env에서 GEMINI_API_KEY를 읽고, 가능한 Gemini 클라이언트로 호출을 시도합니다.
-# 클라이언트가 없으면 친절한 안내를 출력합니다.
+# python
+# gemini_api_fixed.py
+# .env 파일에서 GEMINI_API_KEY를 읽어와 genai 클라이언트를 생성하고 간단한 요청을 보냅니다.
 
-import os
 from dotenv import load_dotenv
-from datetime import datetime
+import os
+from google import genai
+from datetime import date
+import json
+from pathlib import Path
 
-# .env 파일이 있으면 로드합니다 (선택적)
+# .env 파일에서 환경 변수 불러오기
 load_dotenv()
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    print("오류: GEMINI_API_KEY 환경 변수가 설정되어 있지 않습니다.")
-    print("해결: 프로젝트 루트에 .env 파일을 만들고 GEMINI_API_KEY=여기에_키 를 추가하세요.")
-    raise SystemExit(1)
+# 환경 변수 읽기
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise SystemExit("GEMINI_API_KEY가 설정되어 있지 않습니다. .env 파일을 만들거나 'export'로 설정하세요.")
 
-# 현재 날짜/시간 문자열 생성 (로컬 타임)
-current_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+# API 키를 명시적으로 전달하여 클라이언트 생성
+client = genai.Client(api_key=api_key)
 
-# 가능한 클라이언트들에 대해 순차 시도합니다.
-try:
-    # 일부 배포판/버전에서는 `from google import genai` 형태일 수 있습니다.
-    from google import genai  # type: ignore
-    client = genai.Client()  # 클라이언트가 환경변수로 키를 읽을 수 있을 때 동작
-    # 변경: 날짜 컨텍스트를 포함한 contents
-    contents = f"Current date: {current_date}\nQuestion: How many days until Christmas?"
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents
-    )
-    # 응답 객체가 .text 속성을 가지면 출력, 아니면 전체 객체를 출력
-    print(getattr(response, "text", response))
-except Exception:
-    # 대체로 최신 패키지명은 google.generativeai 일 수 있습니다.
-    try:
-        import google.generativeai as generativeai  # type: ignore
-        generativeai.configure(api_key=API_KEY)
-        # 변경: 날짜 컨텍스트를 포함한 프롬프트
-        prompt = f"Current date: {current_date}\nExplain how AI works in a few words"
-        # generate_text 또는 generate 호출 방식은 버전마다 다릅니다.
-        # 아래는 흔한 패턴을 시도하고 실패 시 전체 객체를 출력합니다.
+# Get current date
+today = date.today()
+current_date = today.strftime("%Y-%m-%d")
+
+# --- 새로 추가된 메모리 관련 코드 ---
+MEMORY_FILE = Path(".conversation_memory.json")
+MAX_EXCHANGES = 5  # 보관할 최근 교환 수 (기본값)
+
+def load_memory():
+    """파일에서 메모리 불러오기; 없으면 빈 리스트 반환"""
+    if MEMORY_FILE.exists():
         try:
-            resp = generativeai.generate_text(model="gemini-2.5-flash", prompt=prompt)
-            # 응답이 dict 형태면 후보 텍스트를 찾아 출력
-            if isinstance(resp, dict) and "candidates" in resp and resp["candidates"]:
-                print(resp["candidates"][0].get("output") or resp["candidates"][0])
-            else:
-                print(getattr(resp, "text", resp))
+            return json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
         except Exception:
-            # 다른 API 네이밍(예: generate, text.generate 등)을 시도
-            try:
-                resp2 = generativeai.generate(model="gemini-2.5-flash", prompt=prompt)
-                print(getattr(resp2, "text", resp2))
-            except Exception:
-                print("클라이언트 호출에 실패했습니다. 설치된 google.generativeai의 사용법을 확인하세요.")
-                raise
-    except Exception:
-        print("Gemini 클라이언트 라이브러리가 발견되지 않거나 초기화에 실패했습니다.")
-        print("설치 및 사용 예시:")
-        print("  pip install google-generativeai")
-        print("그리고 사용 중인 라이브러리 문서를 확인하세요.")
-        raise
+            return []
+    return []
 
-    # Ask the user for input, answer the question and keep doing that unil the user says "exit"
-    while True:
-        user_input = input("질문을 입력하세요 (종료하려면 'exit' 입력): ")
-        if user_input.lower() == "exit":
-            print("프로그램을 종료합니다.")
-            break
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=user_input
-            )
-            print(getattr(response, "text", response))
-        except Exception as e:
-            print(f"오류 발생: {e}")
+def save_memory(memory):
+    """메모리를 파일에 저장"""
+    try:
+        MEMORY_FILE.write_text(json.dumps(memory, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print("메모리 저장 중 오류:", e)
+
+def add_exchange(memory, role, text):
+    """메모리에 교환 추가(유저 또는 어시스턴트). 가장 오래된 항목 삭제로 길이 제한 유지"""
+    memory.append({"role": role, "text": text})
+    # 메모리는 '발언' 단위(사용자 또는 어시스턴트). 최대 MAX_EXCHANGES*2 항목을 넘기지 않도록 제한.
+    max_items = MAX_EXCHANGES * 2
+    if len(memory) > max_items:
+        memory[:] = memory[-max_items:]
+    return memory
+
+def format_memory(memory):
+    """메모리를 사람이 읽기 쉬운 텍스트로 변환"""
+    if not memory:
+        return ""
+    lines = ["최근 대화(간단히):"]
+    for item in memory:
+        prefix = "사용자" if item["role"] == "user" else "어시스턴트"
+        # 한 줄로 정리
+        text = item["text"].replace("\n", " ")
+        lines.append(f"{prefix}: {text}")
+    return "\n".join(lines) + "\n\n"
+
+# 메모리 로드
+memory = load_memory()
+
+# Ask the user for input, answer the question and keep doing that until the user says "exit"
+while True:
+    user_input = input("Ask a question (or type 'exit' to quit): ")
+    if user_input.lower() == "exit":
+        break
+
+    # 사용자 입력을 메모리에 추가
+    add_exchange(memory, "user", user_input)
+    save_memory(memory)
+
+    # 메모리를 포함해 모델에 보낼 프롬프트 구성
+    context = format_memory(memory)
+    prompt = f"{context}사용자: {user_input}\n어시스턴트:"
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        answer = getattr(response, "text", None) or getattr(response, "outputs", None) or str(response)
+    except Exception as e:
+        print("API 호출 중 오류가 발생했습니다:", e)
+        # 오류 상황에서도 루프 계속
+        continue
+
+    print("Answer:", answer)
+
+    # 어시스턴트 응답을 메모리에 추가하고 저장
+    add_exchange(memory, "assistant", answer)
+    save_memory(memory)
