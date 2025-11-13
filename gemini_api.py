@@ -61,3 +61,18 @@ except Exception:
         print("  pip install google-generativeai")
         print("그리고 사용 중인 라이브러리 문서를 확인하세요.")
         raise
+
+    # Ask the user for input, answer the question and keep doing that unil the user says "exit"
+    while True:
+        user_input = input("질문을 입력하세요 (종료하려면 'exit' 입력): ")
+        if user_input.lower() == "exit":
+            print("프로그램을 종료합니다.")
+            break
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_input
+            )
+            print(getattr(response, "text", response))
+        except Exception as e:
+            print(f"오류 발생: {e}")
