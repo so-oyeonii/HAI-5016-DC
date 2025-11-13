@@ -80,7 +80,9 @@ while True:
 
     # 메모리를 포함해 모델에 보낼 프롬프트 구성
     context = format_memory(memory)
-    prompt = f"{context}사용자: {user_input}\n어시스턴트:"
+    # 현재 날짜를 시스템 지시사항으로 추가
+    system_info = f"오늘 날짜: {current_date}\n"
+    prompt = f"{system_info}\n{context}사용자: {user_input}\n어시스턴트:"
 
     try:
         response = client.models.generate_content(
